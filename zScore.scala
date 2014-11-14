@@ -57,9 +57,14 @@ object zScore {
     				map(word => ({
     				  i = i+1
     				  i
-    				}%attributeLength) -> word.toDouble ).groupByKey.
+    				}%attributeLength) -> word.toDouble ).
+    				groupByKey.
     				map(word => word._1 -> ((word._2.foldLeft(0.0)(_+_))/size)).
-    				sortByKey(true).map(word => word._2)
+    				sortByKey(true).
+    				map(word=> word._2)
+    				
+    				
+//    				
     mean
     
   }
@@ -71,7 +76,9 @@ object zScore {
    * @param mean : RDD of mean values for each dimension
    * @return a RDD of variance values for each dimension
    */
-  private def computeVariance(rdd : RDD[Vector[String]], mean : RDD[Double]) : RDD[Double] = {
+  private def computeVariance(rdd : RDD[Vector[String]], 
+      mean : RDD[Double])
+  : RDD[Double] = {
     
     //dimension of data point
     val attributeLength = rdd.first.length
@@ -100,10 +107,14 @@ object zScore {
    * @param rdd : RDD of Vectors of String
    * @param mean : RDD of mean values for each dimension
    * @param mean : RDD of variance values for each dimension
-   * @return a RDD of z-scores for each data-point
+   * @return zScoreModel, which comprises of 	(1)RDD of z-scores for each data-point
+   * 											(2)mean and variance of the data-set on which KNN join is applied
    */
    
-  private def compute(rdd : RDD[Vector[String]], mean : RDD[Double], variance : RDD[Double], hash : HashFunction) : zScoreModel = {
+  private def compute(rdd : RDD[Vector[String]], 
+      mean : RDD[Double], 
+      variance : RDD[Double])
+  : zScoreModel = {
 
     
     //dimension of data point
@@ -113,16 +124,13 @@ object zScore {
     val variance_temp = variance.collect
     
     var i = -1L
+    val score = rdd.zipWithIndex.map(line => line._1.map(word => line._2 -> (pow((word.toDouble - mean_temp(({i = i+1
+      					i%attributeLength}).toInt)),2 )/ variance_temp((i%attributeLength).toInt) )) ).
+      					flatMap(line => line.seq).
+      					groupByKey.
+      					map(word =>  sqrt(word._2.foldLeft(0.0)(_+_)) -> word._1).
+      					sortByKey(true).map(word => word._2 -> word._1)
 
-    
-    val score = rdd.flatMap(line => line.seq).
-    			map(word => (({
-    			  i = i+1
-    			  i
-    			}/attributeLength)) -> (pow((word.toDouble - mean_temp(i.toInt%attributeLength)),2 )/ variance_temp(i.toInt%attributeLength) )).
-    			groupByKey.
-    			map(word =>  sqrt(word._2.foldLeft(0.0)(_+_)) -> word._1).
-    			sortByKey(true).map(word => word._2 -> word._1)
     			
     /**
      * check validity of score
@@ -139,13 +147,15 @@ object zScore {
    *
    * @param rdd : RDD of Vectors of String 
    * 
-   * @return a RDD of z-scores for each data-point
+   * @return zScoreModel, which comprises of 	(1)RDD of z-scores for each data-point
+   * 											(2)mean and variance of the data-set on which KNN join is applied
    */    
-  def computeScore(rdd : RDD[Vector[String]], hash : HashFunction) : zScoreModel = {
+  def computeScore(rdd : RDD[Vector[String]])
+  : zScoreModel = {
 
     val mean = computeMean(rdd)
     val variance = computeVariance(rdd, mean)
-    val score = compute(rdd, mean, variance,hash)
+    val score = compute(rdd, mean, variance)
     
     score
   }
@@ -159,7 +169,6 @@ object zScore {
    * @param rdd : RDD of Vectors of String
    * @param mean : RDD of Double
    * @param variance : RDD of Double 
-   * 
    * @return z-score for the data-point being compared against the data-set
    */  
   def computeDataScore(data : Vector[String], mean : RDD[Double], variance : RDD[Double]) : Double = {
@@ -173,7 +182,7 @@ object zScore {
       i
     }.toInt%attributeLength)),2 )/ variance_temp(i.toInt%attributeLength) ) ).
     			foldLeft(0.0)(_+_)
-    data_score
+    sqrt(data_score)
     
   }
    
