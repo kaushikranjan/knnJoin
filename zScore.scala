@@ -62,9 +62,7 @@ object zScore {
     				map(word => word._1 -> ((word._2.foldLeft(0.0)(_+_))/size)).
     				sortByKey(true).
     				map(word=> word._2)
-    				
-    				
-//    				
+   				
     mean
     
   }
@@ -131,12 +129,6 @@ object zScore {
       					map(word =>  sqrt(word._2.foldLeft(0.0)(_+_)) -> word._1).
       					sortByKey(true).map(word => word._2 -> word._1)
 
-    			
-    /**
-     * check validity of score
-     * once back home!!!
-     */
- 
    	new zScoreModel(score,mean,variance)
     
   }
