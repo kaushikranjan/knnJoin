@@ -106,21 +106,16 @@ object knnJoin {
      //increment each element of the dataset with the random vector "rand"
      var kLooped = -1
      val newRDD = rdd.map(vector => vector.
-         								map(word => (word.
-         										toDouble + rand({kLooped = kLooped+1
-         										kLooped%size})).toString
-         				))
+         				map(word => (word.toDouble + rand({kLooped = kLooped+1
+         				kLooped%size})).toString
+         			  ))
    
      //compute z-scores for the iteration
      val modelLooped = zScore.computeScore(newRDD)
      val data_scoreLooped = zScore.computeDataScore(data_point, modelLooped.mean, modelLooped.variance)
      
      //compute nearest neighbours on basis of z-scores     
-     val c_iLooped = knnJoin_perIteration(newRDD, 
-    		 								data_point,
-    		 								rand.toList.map(word => word.toString).toVector,
-    		 								len,
-    		 								modelLooped.score, data_score)
+     val c_iLooped = knnJoin_perIteration(newRDD, data_point, rand.toList.map(word => word.toString).toVector, len, modelLooped.score, data_score)
      
      c_iLooped.persist
  
