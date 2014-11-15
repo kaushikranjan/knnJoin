@@ -15,167 +15,76 @@
  * limitations under the License.
  */
 
-
-/**
- * Get z-scores of all data-points in the dataset
- * Get z-score of the data-point being knn-joined against the dataset
- */
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 import scala.collection.immutable.Vector
-import scala.math._
-import com.google.common.hash.HashFunction
 
-class zScoreModel (
-  val score : RDD[(Long,Double)],
-  val mean : RDD[Double],
-  val variance : RDD[Double] 
-)
-/**
- * Top-level methods for zScore.
- */
 object zScore {
   
+  /**
+   * Formats the integer to it's binary value with 0's spaced to the left of the binary string
+   * i.e. 
+   * asNdigitBinary(3,4) = 0011 
+   * 
+   * @param source : Integer to be formatted to it's binary value
+   * @param digits : the length of the binary string
+   * @return binary value of <source> with length of the string equal to <digits>
+   */
+  def asNdigitBinary (source: Int, digits: Int): String = {
+		val l: java.lang.Long = source.toBinaryString.toLong
+		String.format ("%0" + digits + "d", l) 
+  }
+  
+
+  /**
+   * Computes the z-value of each Vector[Int]
+   * i.e.
+   * Vector(2,6) z-value will be 28
+   * 
+   * @param vector : a Vector of Integers which refers to a data-point
+   * @return z-value of the vector 
+   */
+  def scoreOfDataPoint(vector : Vector[Int]) : Long = {
  
-  /**
-   * Computes the mean (u1 , u2, ... uk) for k-dimensional data
-   * 
-   * @param rdd : RDD of Vectors of String
-   * @return a RDD of mean values for each dimension
-   */
-  private def computeMean(rdd : RDD[Vector[String]]): RDD[Double] = {
-   
-    
-    //dimension of data point
-    val attributeLength = rdd.first.length
-    //no.of data points
-    val size = rdd.count.toDouble
-    
-    var i = -1L
-    val mean = rdd.flatMap(line => line.seq).
-    				map(word => ({
-    				  i = i+1
-    				  i
-    				}%attributeLength) -> word.toDouble ).
-    				groupByKey.
-    				map(word => word._1 -> ((word._2.foldLeft(0.0)(_+_))/size)).
-    				sortByKey(true).
-    				map(word=> word._2)
-   				
-    mean
-    
+    var max = 0
+    //compute the length of the largest binary string in the vector of integers   
+    for(i <- 0 to vector.length-1){
+      if (vector(i).toBinaryString.length() > max ) max = vector(i).toBinaryString.length()
+    }
+
+    var str = new StringBuilder(max * vector.length )
+
+    //map each integer within the vector to a formatted binary string of length <max>
+    val bin2 = vector.map(word => asNdigitBinary(word, max))
+
+    //create the string which is the binary string(z-value) for the input vector
+    for(i <- 0 to max-1) {
+      for(j <- 0 to vector.length-1) {
+        
+        str += bin2(j)(i)
+      }
+    }
+  
+    //convert the binary string(z-value) to it's corresponding Integer value
+    Integer.parseInt(str.toString, 2).toLong
   }
   
   /**
-   * Computes the variance (v1 , v2, ... vk) for k-dimensional data
+   * Computers the z-scores for each entry of the input RDD of Vector of Int, sorted in ascending order
    * 
-   * @param rdd : RDD of Vectors of String
-   * @param mean : RDD of mean values for each dimension
-   * @return a RDD of variance values for each dimension
+   * @param : RDD of Vector of Int
+   * @return z-scores of the RDD[( <line_no> , <z-value> )]
    */
-  private def computeVariance(rdd : RDD[Vector[String]], 
-      mean : RDD[Double])
-  : RDD[Double] = {
-    
-    //dimension of data point
-    val attributeLength = rdd.first.length
-    //no.of data points
-    val size = rdd.count
-    
-    
-    val mean_temp = mean.collect
-    
-    var i = -1L
-    val variance = rdd.flatMap(line => line.seq).
-    				map(word => ({
-    				  i = i+1
-    				  i
-    				}%attributeLength) -> pow((word.toDouble - mean_temp(i.toInt%attributeLength)),2)).
-    				groupByKey.
-    				map(word => word._1 -> ((word._2.foldLeft(0.0)(_+_))/size)).
-    				sortByKey(true).map(word => word._2)
-   variance
-  }
-  
-  
-  /**
-   * Computes the z-score for each data-point within the dataset
-   * 
-   * @param rdd : RDD of Vectors of String
-   * @param mean : RDD of mean values for each dimension
-   * @param mean : RDD of variance values for each dimension
-   * @return zScoreModel, which comprises of 	(1)RDD of z-scores for each data-point
-   * 											(2)mean and variance of the data-set on which KNN join is applied
-   */
-   
-  private def compute(rdd : RDD[Vector[String]], 
-      mean : RDD[Double], 
-      variance : RDD[Double])
-  : zScoreModel = {
+  def computeScore(rdd : RDD[Vector[Int]])	: RDD[(Long,Long)] = {
 
-    
-    //dimension of data point
-    val attributeLength = rdd.first.length
-    val size = rdd.count + 1
-    val mean_temp = mean.collect
-    val variance_temp = variance.collect
-    
-    var i = -1L
-    val score = rdd.zipWithIndex.map(line => line._1.map(word => line._2 -> (pow((word.toDouble - mean_temp(({i = i+1
-      					i%attributeLength}).toInt)),2 )/ variance_temp((i%attributeLength).toInt) )) ).
-      					flatMap(line => line.seq).
-      					groupByKey.
-      					map(word =>  sqrt(word._2.foldLeft(0.0)(_+_)) -> word._1).
-      					sortByKey(true).map(word => word._2 -> word._1)
-
-   	new zScoreModel(score,mean,variance)
-    
-  }
-
-    
-  /**
-   * This function acts as an entry point to compute the z-scores of the data-set
-   *
-   * @param rdd : RDD of Vectors of String 
-   * 
-   * @return zScoreModel, which comprises of 	(1)RDD of z-scores for each data-point
-   * 											(2)mean and variance of the data-set on which KNN join is applied
-   */    
-  def computeScore(rdd : RDD[Vector[String]])
-  : zScoreModel = {
-
-    val mean = computeMean(rdd)
-    val variance = computeVariance(rdd, mean)
-    val score = compute(rdd, mean, variance)
+    val score = rdd.zipWithIndex.
+    			map(word => scoreOfDataPoint(word._1) -> word._2).
+    			sortByKey(true).
+    			map(word => word._2 -> word._1)
     
     score
+        
   }
   
-  
-  
-  /**
-   * This function computes the score of a single data-point against the data-set 
-   * it is being compared against
-   *
-   * @param rdd : RDD of Vectors of String
-   * @param mean : RDD of Double
-   * @param variance : RDD of Double 
-   * @return z-score for the data-point being compared against the data-set
-   */  
-  def computeDataScore(data : Vector[String], mean : RDD[Double], variance : RDD[Double]) : Double = {
-    val mean_temp = mean.collect
-    val variance_temp = variance.collect
-    val attributeLength = data.length
-    
-    var i = -1L
-    val data_score = data.map(word => (pow((word.toDouble - mean_temp({
-      i = i+1
-      i
-    }.toInt%attributeLength)),2 )/ variance_temp(i.toInt%attributeLength) ) ).
-    			foldLeft(0.0)(_+_)
-    sqrt(data_score)
-    
-  }
-   
 }
