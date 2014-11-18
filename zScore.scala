@@ -76,10 +76,9 @@ object zScore {
    * @param : RDD of Vector of Int
    * @return z-scores of the RDD[( <line_no> , <z-value> )]
    */
-  def computeScore(rdd : RDD[Vector[Int]])	: RDD[(Long,Long)] = {
+  def computeScore(rdd : RDD[(Vector[Int],Long)])	: RDD[(Long,Long)] = {
 
-    val score = rdd.zipWithIndex.
-    			map(word => scoreOfDataPoint(word._1) -> word._2).
+    val score = rdd.map(word => scoreOfDataPoint(word._1) -> word._2).
     			sortByKey(true).
     			map(word => word._2 -> word._1)
     
