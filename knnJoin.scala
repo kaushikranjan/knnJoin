@@ -4,112 +4,97 @@ import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 import scala.collection.immutable.Vector
 import scala.math._
-import com.google.common.hash._
+import scala.util.Random
 
 
 object knnJoin {
-  
-   /**
-   * Trims the data-set of the non-required entries based on the keys computed in each iteration of KnnJoin
-   * 
-   * @param rdd : RDD of Vectors of String, which is the data-set in which knnJoin has to be undertaken
-   * @param hash : the hash_function applied
-   * @param keys : RDD of (Long,Int) containing the keys on basis of which the data-set needs to be cleansed
-   * @return an RDD containing data-points matching the keys present in the argument list
-   */
-  def trimmedData(rdd : RDD[Vector[String]], hash : HashFunction, keys : RDD[(Long,Int)]) : RDD[Vector[String]] = {
-   
-    //dimension of data-point
-    val attributeLength = rdd.first.length
-    //no.of data points
-    val size = rdd.count
-    
-    var counter = -1
-    val rdd_temp = rdd.map(word =>{
-      counter = counter+1
-      counter
-      } -> word )
-   
-    //keys.saveAsTextFile("/home/kaushik/Desktop/zScores")
-    //rdd_temp.saveAsTextFile("/home/kaushik/Desktop/rdd")
-    
-        
-    /**
-     * keys(Long,Int) not required
-     * as using array of Long instead
-     */
-        
-    val keyValues = keys.map(word => word._1).collect
-   
-    //rdd_temp.foreach(word => println("rdd " + word._1))
-    //keys.foreach(word => println("keys " + word._1 + " : " + word._2))
-    
-    //val join = rdd_temp.filter(word => t.contains(word._1 - size)).map(word => word._2)//keys.map(word => brd.value.lookup(word._1)(1))
-    val join = rdd_temp.filter(word => keyValues.contains(word._1)).map(word => word._2)
-    //join.saveAsTextFile("/home/kaushik/Desktop/joins")
-        
-    join
 
-    
-  }
-  
-  
    /**
    * Computes the nearest neighbors in the data-set for the data-point against which KNN
    * has to be applied for A SINGLE ITERATION
    * 
-   * @param rdd : RDD of Vectors of String, which is the data-set in which knnJoin has to be undertaken
-   * @param data_point : Vector of String, which is the data-point with which knnJoin is done with the data-set
-   * @param rand_point : Vector of String, it's the random vector generated in each iteration
+   * @param rdd : RDD of Vectors of Int, which is the data-set in which knnJoin has to be undertaken
+   * @param data_point : Vector of Int, which is the data-point with which knnJoin is done with the data-set
+   * @param rand_point : Vector of Int, it's the random vector generated in each iteration
    * @param len : the number of data-points from the data-set on which knnJoin is to be done
-   * @param zScore : RDD of (Long,Double), which is the <key,zscore> for each entry of the dataset
-   * @param data_score : Double value of z-score of the data-point
+   * @param zScore : RDD of (Long,Long), which is the ( <line_no> , <zscore> ) for each entry of the dataset
+   * @param data_score : Long value of z-score of the data-point
    * @return an RDD of the nearest 2*len entries from the data-point on which KNN needs to be undertaken for that iteration
    */
-  def knnJoin_perIteration(rdd : RDD[Vector[String]], data_point : Vector[String], rand_point : Vector[String],
-      len : Int, zScore : RDD[(Long,Double)], data_score : Double ) : RDD[Vector[String]] = {
+  def knnJoin_perIteration(rdd : RDD[(Vector[Int],Long)],
+      data_point : Vector[Int],
+      rand_point : Vector[Int],
+      len : Int,
+      zScore : RDD[(Long,Long)],
+      data_score : Long,
+      sc : SparkContext) : RDD[(Vector[Int],Long)] = {
     
-    val hash_seed = Hashing.murmur3_128(5) 
-    val attributeLength = rdd.first.length
-     
-    //reset()
-    
-    var i = -1L
-    val rdd_temp = rdd.flatMap(line => line.seq).
-   					map(word => ({i=i+1
-   					  i
-   					  }/attributeLength).toLong -> (word.toDouble + rand_point(i.toInt%attributeLength).toDouble)).
-   					groupByKey.sortByKey(true)
-   
-   var j = -1L
+  
+  
    // rdd with score greater than the z-score of the data-point
    val greaterRDD = zScore.filter(word  => word._2 > data_score).
    					map(word => word._2 -> word._1).
    					sortByKey(true).
-   					map(word => word._2).filter(word => {
-   					  j = j+1
-   					  j
-   					  } < len).collect
-
-   var k = -1L
+   					map(word => word._2).
+   					zipWithIndex
    // rdd with score lesser than the z-score of the data-point
    val lesserRDD = zScore.filter(word => word._2 < data_score).
-   					    map(word => word._2 -> word._1).
-   					    sortByKey(false).
-   					    map(word => word._2).
-   					    filter(word => {
-   					      k = k+1
-   					      k
-   					    } < len).collect
-   					    
+   							map(word => word._2 -> word._1).
+   							sortByKey(false).
+   							map(word => word._2).
+   							zipWithIndex
+   		
+   	
+   /**
+    * WE NEED A TOTAL of 2*len entries,
+    * hence the IF-ELSE construct to guarantee these many no.of entries in the returned RDD
+    */
+   	
+   //if the no.of entries in the greaterRDD and lesserRDD is greater than <len>
+   //extract <len> no.of entries from each RDD
+   if((greaterRDD.count >= len)&&(lesserRDD.count >= len)) {
+     val trim = greaterRDD.filter(word => word._2 < len).map(word => word._1).
+    		 		union(lesserRDD.filter(word => word._2 < len).map(word => word._1))
+    
+    val join = rdd.map(word => word._2 -> word._1).
+   					join(trim.map(word => word -> 0)).
+   					map(word => word._2._1 -> word._1)
+   	return join
+   	
+   }
 
-   val sc = new SparkContext("local", "knnJoin2")
-   val trim = sc.parallelize(greaterRDD.union(lesserRDD))
-   //the keys are mapped to <key,0> to make it a pairRDD for simplicity of further operations
-   val keysOfDataPoints = trim.map(word => word -> 0)
+   //if the no.of entries in the greaterRDD less than <len>
+   //extract all entries from greaterRDD and
+   //<len> + (<len> - greaterRDD.count) no.of entries from lesserRDD 
+   else if(greaterRDD.count < len) {
+     
+     val len_mod = len + (len - greaterRDD.count)
+     val trim = greaterRDD.map(word => word._1).
+    		 		union(lesserRDD.filter(word => word._2 < len_mod).map(word => word._1))
+    
+    val join = rdd.map(word => word._2 -> word._1).
+   					join(trim.map(word => word -> 0)).
+   					map(word => word._2._1 -> word._1)
+   	return join
+   }
 
-   val join = trimmedData(rdd, hash_seed, keysOfDataPoints)
-   join
+   //if the no.of entries in the lesserRDD less than <len>
+   //extract all entries from lesserRDD and
+   //<len> + (<len> - lesserRDD.count) no.of entries from greaterRDD
+   else {
+     
+     val len_mod = len + (len - lesserRDD.count)
+     val trim = greaterRDD.filter(word => word._2 < len_mod).map(word => word._1).
+    		 		union(lesserRDD.map(word => word._1))
+    
+    val join = rdd.map(word => word._2 -> word._1).
+   					join(trim.map(word => word -> 0)).
+   					map(word => word._2._1 -> word._1)
+   	
+   	return join
+   }
+   
+   
   }
   
   
@@ -117,76 +102,124 @@ object knnJoin {
    * Computes the nearest neighbors in the data-set for the data-point against which KNN
    * has to be applied
    * 
-   * @param rdd : RDD of Vectors of String, which is the data-set in which knnJoin has to be undertaken
-   * @param data_point : Vector of String, which is the data-point with which knnJoin is done with the data-set
+   * @param rdd : RDD of Vectors of Int, which is the data-set in which knnJoin has to be undertaken
+   * @param data_point : Vector of Int, which is the data-point with which knnJoin is done with the data-set
    * @param len : the number of data-points from the data-set on which knnJoin is to be done
    * @param random_size : the number of iterations which has to be carried out
-   * @return an RDD of Vectors of String on which simple KNN needs to be applied with respect to the data-point
+   * @sc : SparkContext
+   * @return an RDD of Vectors of Int on which simple KNN needs to be applied with respect to the data-point
    */
-  def knnJoin(rdd : RDD[Vector[String]], data_point : Vector[String], len : Int, 
-      random_size : Int) : RDD[Vector[String]] = {
+  def knnJoin(rdd : RDD[Vector[Int]], 
+      data_point : Vector[Int], 
+      len : Int, 
+      random_size : Int,
+      sc : SparkContext)
+  : RDD[Vector[Int]] = {
    
-   // val sc = new SparkContext("local", "knnJoin_datapoint")
-    
     val size = rdd.first.length
-    val rand = new Array[Double](size)//mutable.Buffer
+    val rand = new Array[Int](size)
    
+    val randomValue = new Random
   
-   val hash =  Hashing.murmur3_128(5)
-   val model = zScore.computeScore(rdd, hash)
-   val data_score = zScore.computeDataScore(data_point, model.mean, model.variance)
+    val rdd1 = rdd.zipWithIndex
+   //compute z-value for each iteration, this being the first
+   val model = zScore.computeScore(rdd1)
+   val data_score = zScore.scoreOfDataPoint(data_point)
+  
    
-   for(count <- 0 to size-1) rand(count) = 0.0
    
-   val c_i = knnJoin_perIteration(rdd, data_point, rand.toList.map(word => word.toString).toVector ,len,model.score, data_score)
+   //for first iteration rand vector is a ZERO vector
+   for(count <- 0 to size-1) rand(count) = 0
+   //compute nearest neighbours on basis of z-scores
+   val c_i = knnJoin_perIteration(rdd1, data_point, rand.toVector ,len,model, data_score, sc)
    c_i.persist
-   
-   
-   //remove the first entry from the data-set returned by knnJoin_perIteration 
-   var i = -1
-   val c_i2 = c_i.filter(word => {i = i+1
-     i} > 0)
-     
-      //println(paral.count + " - " + c_i2.count)
-     c_i2.saveAsTextFile("/home/kaushik/Desktop/a1")
-     
-   //compute - its the rdd where data-set generated from each iteration is being recursively appended 
-   var compute = c_i2
+   //compute -> rdd where data-set generated from each iteration is being recursively appended 
+   var compute = c_i
    compute.persist
    
    
    //the no.of iterations to be performed
    for(coun <- 2 to random_size) {
      
-     for(i <- 0 to size-1) rand(i) = random
+     for(i <- 0 to size-1) rand(i) = randomValue.nextInt(100)
      
     		 
-     /**
-      * ADD CODE TO INCREMENT EACH DATA-POINT OF DATASET BY rand
-      * before applying knnJoin_perIteration of that data-set
-      */
+     //increment each element of the dataset with the random vector "rand"
+     var kLooped = -1
+     val newRDD = rdd1.map(vector => {kLooped = -1
+       					vector._1.map(word => word + rand({kLooped = kLooped+1
+         				kLooped%size})
+         			  )} -> vector._2)
    
-     val modelLooped = zScore.computeScore(rdd, hash)
-     val data_scoreLooped = zScore.computeDataScore(data_point, modelLooped.mean, modelLooped.variance)
-     
-     val c_iLooped = knnJoin_perIteration(rdd, data_point, rand.toList.map(word => word.toString).toVector ,len, modelLooped.score, data_score)
-     
-     c_iLooped.persist
+        
+     val newData_point = data_point.map(word => word + rand({kLooped = kLooped+1
+         				kLooped%size}))
+         				
+         
+     //compute z-scores for the iteration
+     val modelLooped = zScore.computeScore(newRDD)
+     val data_scoreLooped = zScore.scoreOfDataPoint(newData_point)
     
-     var iLooped = -1
-     var c_i2Looped = c_iLooped.filter(word => {iLooped = iLooped+1
-     	iLooped} > 0)
+     //compute nearest neighbours on basis of z-scores     
+     val c_iLooped = knnJoin_perIteration(newRDD, newData_point, rand.toVector, len, modelLooped, data_scoreLooped, sc)
+     c_iLooped.persist
+ 
+     //remove the effect of random vector "rand" from each entry of the the returned RDD from knnJoin_perIteration
+     var z_Looped = -1
+     val c_iCleansedLooped = c_iLooped.map(line => {z_Looped = -1
+       							line._1.map(word => word - rand({z_Looped = z_Looped+1
+       							z_Looped%size})) } -> line._2)
      
-     c_i2Looped.saveAsTextFile("/home/kaushik/Desktop/a"+coun)
-     compute = compute.union(c_i2Looped)
-     //persist of data is required, else abnormal result is being en-countered 
+     compute = compute.union(c_iCleansedLooped)
      compute.persist
    }
+   
+    kNN(removeRedundantEntries(compute), data_point, len)
+  }
+  
+  /**
+   * It removes redundant Vectors from the dataset
+   * 
+   * @param rdd : RDD of Vector[Int] and the vectors corresponding line_no in the data-set
+   * @return : RDD of non-repetitive Vectors on Int
+   */
+  def removeRedundantEntries(rdd : RDD[(Vector[Int],Long)]) : RDD[Vector[Int]] = {
+    rdd.map(word => word._2 -> word._1).
+    			groupByKey.
+    			map(word => word._2.last)
     
-   
-     compute.saveAsTextFile("/home/kaushik/Desktop/final")
-     compute
-   
+  }
+  
+  /**
+   * Computes euclidean distance between two vectors
+   * 
+   * @param point1 : Vector of Int
+   * @param point2 : Vector of Int
+   * @return : euclidean distance between the two vectors
+   */
+  def euclideanDist(point1 : Vector[Int], point2 : Vector[Int]) : Double = {
+    var sum = 0.0
+    for(i <- 0 to point1.length-1) {
+      sum = sum + pow(point1(i) - point2(i),2)
+    }
+    sqrt(sum)
+  }
+  
+  /**
+   * Performs kNN over the modified data-set and returns the k-nearest neighbors for the data-point
+   * 
+   * @param rdd : RDD of Vector of Int, which is the reduced data-set after kNNJoin function applied to the data-set
+   * @param data_point : Vector of Int, is the data-point for which kNN needs to be undertaken
+   * @param k : the no.of neighbors to be computed
+   * @return : RDD of Vector of Int
+   */
+  def kNN(rdd : RDD[Vector[Int]], data_point : Vector[Int], k : Int) : RDD[Vector[Int]] = {
+    var dist_rdd = rdd.map(word => euclideanDist(data_point, word) -> word).
+    				sortByKey(true).
+    				zipWithIndex.
+    				filter(word => word._2 < k).map(word => word._1._2)
+    dist_rdd
+    
   }
   
 }
