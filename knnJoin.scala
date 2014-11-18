@@ -21,13 +21,13 @@ object knnJoin {
    * @param data_score : Long value of z-score of the data-point
    * @return an RDD of the nearest 2*len entries from the data-point on which KNN needs to be undertaken for that iteration
    */
-  def knnJoin_perIteration(rdd : RDD[Vector[Int]],
+  def knnJoin_perIteration(rdd : RDD[(Vector[Int],Long)],
       data_point : Vector[Int],
       rand_point : Vector[Int],
       len : Int,
       zScore : RDD[(Long,Long)],
       data_score : Long,
-      sc : SparkContext) : RDD[Vector[Int]] = {
+      sc : SparkContext) : RDD[(Vector[Int],Long)] = {
     
   
   
@@ -37,14 +37,12 @@ object knnJoin {
    					sortByKey(true).
    					map(word => word._2).
    					zipWithIndex
-   
    // rdd with score lesser than the z-score of the data-point
    val lesserRDD = zScore.filter(word => word._2 < data_score).
    							map(word => word._2 -> word._1).
    							sortByKey(false).
    							map(word => word._2).
    							zipWithIndex
-
    		
    	
    /**
@@ -58,10 +56,9 @@ object knnJoin {
      val trim = greaterRDD.filter(word => word._2 < len).map(word => word._1).
     		 		union(lesserRDD.filter(word => word._2 < len).map(word => word._1))
     
-    val join = rdd.zipWithIndex.
-   					map(word => word._2 -> word._1).
+    val join = rdd.map(word => word._2 -> word._1).
    					join(trim.map(word => word -> 0)).
-   					map(word => word._2._1)
+   					map(word => word._2._1 -> word._1)
    	return join
    	
    }
@@ -75,10 +72,9 @@ object knnJoin {
      val trim = greaterRDD.map(word => word._1).
     		 		union(lesserRDD.filter(word => word._2 < len_mod).map(word => word._1))
     
-    val join = rdd.zipWithIndex.
-   					map(word => word._2 -> word._1).
+    val join = rdd.map(word => word._2 -> word._1).
    					join(trim.map(word => word -> 0)).
-   					map(word => word._2._1)
+   					map(word => word._2._1 -> word._1)
    	return join
    }
 
@@ -91,10 +87,9 @@ object knnJoin {
      val trim = greaterRDD.filter(word => word._2 < len_mod).map(word => word._1).
     		 		union(lesserRDD.map(word => word._1))
     
-    val join = rdd.zipWithIndex.
-   					map(word => word._2 -> word._1).
+    val join = rdd.map(word => word._2 -> word._1).
    					join(trim.map(word => word -> 0)).
-   					map(word => word._2._1)
+   					map(word => word._2._1 -> word._1)
    	
    	return join
    }
@@ -126,14 +121,17 @@ object knnJoin {
    
     val randomValue = new Random
   
+    val rdd1 = rdd.zipWithIndex
    //compute z-value for each iteration, this being the first
-   val model = zScore.computeScore(rdd)
+   val model = zScore.computeScore(rdd1)
    val data_score = zScore.scoreOfDataPoint(data_point)
+  
+   
    
    //for first iteration rand vector is a ZERO vector
    for(count <- 0 to size-1) rand(count) = 0
    //compute nearest neighbours on basis of z-scores
-   val c_i = knnJoin_perIteration(rdd, data_point, rand.toVector ,len,model, data_score, sc)
+   val c_i = knnJoin_perIteration(rdd1, data_point, rand.toVector ,len,model, data_score, sc)
    c_i.persist
    //compute -> rdd where data-set generated from each iteration is being recursively appended 
    var compute = c_i
@@ -148,14 +146,16 @@ object knnJoin {
     		 
      //increment each element of the dataset with the random vector "rand"
      var kLooped = -1
-     val newRDD = rdd.map(vector => {kLooped = -1
-       					vector.map(word => word + rand({kLooped = kLooped+1
+     val newRDD = rdd1.map(vector => {kLooped = -1
+       					vector._1.map(word => word + rand({kLooped = kLooped+1
          				kLooped%size})
-         			  )})
+         			  )} -> vector._2)
    
+        
      val newData_point = data_point.map(word => word + rand({kLooped = kLooped+1
          				kLooped%size}))
          				
+         
      //compute z-scores for the iteration
      val modelLooped = zScore.computeScore(newRDD)
      val data_scoreLooped = zScore.scoreOfDataPoint(newData_point)
@@ -167,16 +167,59 @@ object knnJoin {
      //remove the effect of random vector "rand" from each entry of the the returned RDD from knnJoin_perIteration
      var z_Looped = -1
      val c_iCleansedLooped = c_iLooped.map(line => {z_Looped = -1
-       							line.map(word => word - rand({z_Looped = z_Looped+1
-       							z_Looped%size})) })
+       							line._1.map(word => word - rand({z_Looped = z_Looped+1
+       							z_Looped%size})) } -> line._2)
      
      compute = compute.union(c_iCleansedLooped)
      compute.persist
    }
    
-    compute
+    kNN(removeRedundantEntries(compute), data_point, len)
   }
   
+  /**
+   * It removes redundant Vectors from the dataset
+   * 
+   * @param rdd : RDD of Vector[Int] and the vectors corresponding line_no in the data-set
+   * @return : RDD of non-repetitive Vectors on Int
+   */
+  def removeRedundantEntries(rdd : RDD[(Vector[Int],Long)]) : RDD[Vector[Int]] = {
+    rdd.map(word => word._2 -> word._1).
+    			groupByKey.
+    			map(word => word._2.last)
+    
+  }
   
+  /**
+   * Computes euclidean distance between two vectors
+   * 
+   * @param point1 : Vector of Int
+   * @param point2 : Vector of Int
+   * @return : euclidean distance between the two vectors
+   */
+  def euclideanDist(point1 : Vector[Int], point2 : Vector[Int]) : Double = {
+    var sum = 0.0
+    for(i <- 0 to point1.length-1) {
+      sum = sum + pow(point1(i) - point2(i),2)
+    }
+    sqrt(sum)
+  }
+  
+  /**
+   * Performs kNN over the modified data-set and returns the k-nearest neighbors for the data-point
+   * 
+   * @param rdd : RDD of Vector of Int, which is the reduced data-set after kNNJoin function applied to the data-set
+   * @param data_point : Vector of Int, is the data-point for which kNN needs to be undertaken
+   * @param k : the no.of neighbors to be computed
+   * @return : RDD of Vector of Int
+   */
+  def kNN(rdd : RDD[Vector[Int]], data_point : Vector[Int], k : Int) : RDD[Vector[Int]] = {
+    var dist_rdd = rdd.map(word => euclideanDist(data_point, word) -> word).
+    				sortByKey(true).
+    				zipWithIndex.
+    				filter(word => word._2 < k).map(word => word._1._2)
+    dist_rdd
+    
+  }
   
 }
