@@ -81,12 +81,12 @@ object knnJoin {
    else {
 
      val lenMod = len + (len - lesserRDD.count)
-     val trim = greaterRDD.filter(word => word._2 < lenMod).map(word => word._1).
-            union(lesserRDD.map(word => word._1))
+     val trim = greaterRDD.filter(word => word._2 < lenMod).map(word => word._1)
+            .union(lesserRDD.map(word => word._1))
 
-     val join = rdd.map(word => word._2 -> word._1).
-            join(trim.map(word => word -> 0)).
-            map(word => word._2._1 -> word._1)
+     val join = rdd.map(word => word._2 -> word._1)
+            .join(trim.map(word => word -> 0))
+            .map(word => word._2._1 -> word._1)
      join
    }
   }
@@ -103,10 +103,10 @@ object knnJoin {
    * @return an RDD of Vectors of Int on which simple KNN needs to be applied with respect to the data-point
    */
   def knnJoin(dataSet : RDD[Vector[Int]],
-      dataPoint : Vector[Int],
-      len : Int,
-      randomSize : Int,
-      sc : SparkContext): RDD[Vector[Int]] = {
+              dataPoint : Vector[Int],
+              len : Int,
+              randomSize : Int,
+              sc : SparkContext): RDD[Vector[Int]] = {
 
    val size = dataSet.first().length
    val rand = new Array[Int](size)
@@ -152,7 +152,8 @@ object knnJoin {
      val data_scoreLooped = zScore.scoreOfDataPoint(newData_point)
 
      //compute nearest neighbours on basis of z-scores
-     val c_iLooped = knnJoin_perIteration(newRDD, newData_point, rand.toVector, len, modelLooped, data_scoreLooped, sc)
+     val c_iLooped = knnJoin_perIteration(newRDD, newData_point, rand.toVector, 
+                                                  len, modelLooped, data_scoreLooped, sc)
      c_iLooped.persist()
 
      //remove the effect of random vector "rand" from each entry of the the returned RDD from knnJoin_perIteration
